@@ -2,17 +2,49 @@ package com.jioremote.app.data
 
 import android.content.Context
 import androidx.core.content.edit
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.SharedPreferencesMigration
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 
-class RemoteSettings(context: Context) {
-    private val prefs = context.getSharedPreferences("jioremote", Context.MODE_PRIVATE)
-    val host: String get() = prefs.getString("host", "") ?: ""
-    val port: String get() = prefs.getString("port", "5555") ?: "5555"
+private const val LEGACY_SETTINGS = "jioremote"
 
-    fun saveConnection(host: String, port: String) {
-        prefs.edit { putString("host", host).putString("port", port) }
+private val Context.tvSettings by preferencesDataStore(
+    name = "tv_connection",
+    produceMigrations = { context ->
+        listOf(SharedPreferencesMigration(context, LEGACY_SETTINGS, setOf("host", "port")))
+    },
+)
+
+internal data class TvConnection(val host: String = "", val port: String = "5555")
+
+internal class TvConnectionStore(private val dataStore: DataStore<Preferences>) {
+    suspend fun load(): TvConnection {
+        val values = dataStore.data.first()
+        return TvConnection(values[hostKey].orEmpty(), values[portKey] ?: TvConnection().port)
     }
+
+    suspend fun save(connection: TvConnection) {
+        dataStore.edit {
+            it[hostKey] = connection.host
+            it[portKey] = connection.port
+        }
+    }
+
+    private companion object {
+        val hostKey = stringPreferencesKey("host")
+        val portKey = stringPreferencesKey("port")
+    }
+}
+
+internal class RemoteSettings(context: Context) {
+    val connection = TvConnectionStore(context.tvSettings)
+    private val prefs = context.getSharedPreferences(LEGACY_SETTINGS, Context.MODE_PRIVATE)
 
     fun loadChannels(): List<Channel> {
         val raw = prefs.getString("channels", null) ?: return listOf(Channel("304189", "Sun TV"))

@@ -3,7 +3,9 @@
 A native **Kotlin + Jetpack Compose** personal Android phone app. It sends ADB commands over your local Wi-Fi to an Android TV running JioTV+ 6.0.8.
 
 ### What is included
-- TV IP and ADB connection port input, remembered locally
+- Material 3 remote with light and dark themes, a TV connection card, channel grid, and large remote keys
+- TV IP and ADB connection port saved locally with DataStore, including migration from earlier builds
+- Explicit Connect and Disconnect controls. The app starts disconnected and enables remote actions after the authenticated shell check succeeds.
 - Private/link-local IPv4 validation so commands cannot be sent to a public Internet address
 - ADB connectivity check (a real shell command)
 - Android 11+ six-digit wireless pairing UI (pairing and connection port are different)
@@ -28,17 +30,17 @@ Kadb 2.1.1 is intentionally pinned: it is the newest Kadb 2.1.x AAR whose metada
 2. On the TV, enable Developer options and ADB debugging. Choose one path:
    - **Classic TCP ADB:** enable network debugging and use its connection port (commonly 5555). The TV must approve the phone app's new RSA identity when prompted.
    - **Android 11+ Wireless debugging:** choose **Pair device with pairing code**. Enter the displayed pairing port and six-digit code in the app, then tap **Pair phone with TV**. After pairing, return to the TV's Wireless debugging screen and enter its separate **IP address & port** connection port in the main connection field.
-3. Tap **Connect / Test TV**. Expect `Connection verified • IP:port`; this confirms an authenticated shell probe, not video playback.
+3. Tap **Save settings** to remember the valid address and connection port, or tap **Connect** to save and verify them in one step. The connection card shows **Connected** and the endpoint after an authenticated shell probe. Tap **Disconnect** to disable remote actions on the phone.
 4. Tap **Open JioTV+**, then **Sun TV**. Confirm on the TV that JioTV+ 6.0.8 opens and Sun TV actually plays.
 5. Verify **Back**, **OK**, D-pad, Home, and volume buttons individually; some TV firmware handles Home/volume differently.
 6. Record the phone model/Android version, TV IP and connection mode (not pairing code or private key), UI status/errors, and relevant phone logs. From a Mac attached to the phone for debugging, a useful log command is `adb logcat --pid=$(adb shell pidof com.jioremote.app)`.
 
-### What is verified / not verified
-**Verified externally by user:** From Mac, the deep link to Sun TV `jiotvplus://304189?resume=true&source=watchnext` opened and played on JioTV+ 6.0.8.
+### Validation
 
-**Verified in the development environment:** Gradle dependency resolution, six JVM unit tests, `assembleDebug`, and Android lint complete successfully. The exact Sun TV shell command is covered by a unit test.
-
-**Not yet verified:** The APK has not been installed or run on a physical phone here, and phone-to-TV authorization, pairing, commands, and playback remain untested. Device-specific authentication may still need adjustments. The app reports when a shell command succeeds, **not** whether streaming media has actually played.
+- Gradle 8.14.3 completed `testDebugUnitTest assembleDebug lint` with 13 passing JVM tests and zero lint errors. The tests cover the exact Sun TV command, endpoint validation, DataStore persistence, and ViewModel operation transitions.
+- A physical Android 15 phone (A063) received an in-place update. Its previous TV IP and connection port migrated to DataStore and survived a cold reopen. The existing app-private ADB identity remained in place.
+- On the ACP75P TV running JioTV+ 6.0.8, the phone connected over classic TCP ADB. **Open JioTV+** brought the JioTV+ activity to the foreground, and the TV activity log recorded the **Sun TV** VIEW intent for channel `304189`. **Back** returned the TV to the previous app, and **Disconnect** returned the phone to editable settings.
+- The TV started its secure video decoder after the phone’s Sun TV request, and the user confirmed visible playback. Six-digit wireless pairing and first-time RSA authorization still need separate physical tests.
 
 ### Notes
 - The pairing port (shown with a temporary six-digit code) is NOT the ADB connection port; Android 11+ wireless debugging normally chooses dynamic ports.
