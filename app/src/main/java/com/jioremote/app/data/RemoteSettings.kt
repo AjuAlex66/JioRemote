@@ -1,6 +1,7 @@
 package com.jioremote.app.data
 
 import android.content.Context
+import androidx.core.content.edit
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -10,7 +11,7 @@ class RemoteSettings(context: Context) {
     val port: String get() = prefs.getString("port", "5555") ?: "5555"
 
     fun saveConnection(host: String, port: String) {
-        prefs.edit().putString("host", host).putString("port", port).apply()
+        prefs.edit { putString("host", host).putString("port", port) }
     }
 
     fun loadChannels(): List<Channel> {
@@ -34,6 +35,6 @@ class RemoteSettings(context: Context) {
         channels.forEach { channel ->
             array.put(JSONObject().put("id", channel.id).put("name", channel.name))
         }
-        prefs.edit().putString("channels", array.toString()).apply()
+        prefs.edit { putString("channels", array.toString()) }
     }
 }

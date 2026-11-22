@@ -16,8 +16,16 @@ private val ipv4 = Regex("""\d{1,3}(\.\d{1,3}){3}""")
 
 internal fun validatedHost(raw: String): String {
     val host = raw.trim()
-    require(ipv4.matches(host) && host.split('.').all { it.toInt() <= 255 }) {
-        "Enter the TV's IPv4 address (for example 192.168.1.20)"
+    val octets = host.split('.').mapNotNull(String::toIntOrNull)
+    val isValidIpv4 = ipv4.matches(host) && octets.size == 4 && octets.all { it in 0..255 }
+    val isTrustedLan = isValidIpv4 && (
+        octets[0] == 10 ||
+            (octets[0] == 172 && octets[1] in 16..31) ||
+            (octets[0] == 192 && octets[1] == 168) ||
+            (octets[0] == 169 && octets[1] == 254)
+        )
+    require(isTrustedLan) {
+        "Enter a private local-network TV IPv4 address (for example 192.168.1.20)"
     }
     return host
 }

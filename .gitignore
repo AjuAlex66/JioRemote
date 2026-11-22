@@ -7,3 +7,17 @@ local.properties
 *.apk
 *.aab
 .DS_Store
+.kotlin/
+**/build/
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+secrets.properties
+credentials.json
+.env
+.env.*
+adbkey*
+adb-private-key*
+*.pem
+*.key
