@@ -3,6 +3,8 @@ package com.jioremote.app.ui
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.ViewModelStore
 import com.jioremote.app.adb.RemoteCommands
+import com.jioremote.app.data.Channel
+import com.jioremote.app.data.DefaultChannel
 import com.jioremote.app.data.TvConnection
 import com.jioremote.app.data.TvConnectionStore
 import kotlinx.coroutines.CompletableDeferred
@@ -161,6 +163,29 @@ class RemoteViewModelTest {
         runCurrent()
         assertEquals(ConnectionStatus.Disconnected, vm.state.value.connection)
         assertNull(vm.state.value.notice)
+    }
+
+    @Test fun unconfiguredChannelOpensEditorWithoutSendingACommand() = runTest(dispatcher) {
+        val channel = DefaultChannel.Flowers.create()
+        val saved = mutableListOf<Channel>()
+        val vm = RemoteViewModel(settings(), { listOf(channel) }, { saved.addAll(it) },
+            { _, _, _ -> error("Unexpected ADB command") }, { _, _, _ -> error("Unexpected pairing") })
+        models.put("channels", vm)
+        runCurrent()
+
+        vm.play(channel)
+        assertEquals(channel.key, vm.state.value.channelDraft?.key)
+        assertEquals("", vm.state.value.channelDraft?.id)
+        vm.setChannelId("123; exit")
+        vm.saveChannel()
+        assertNotNull(vm.state.value.channelDraft?.error)
+        assertTrue(saved.isEmpty())
+
+        vm.setChannelId("123")
+        vm.saveChannel()
+        assertEquals(channel.copy(id = "123"), saved.single())
+        assertEquals(saved, vm.state.value.channels)
+        assertNull(vm.state.value.channelDraft)
     }
 
     private fun TestScope.settings(): TvConnectionStore {

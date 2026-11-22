@@ -13,7 +13,7 @@ object RemoteCommands {
     }
 
     fun key(code: Int): String {
-        require(code in setOf(3, 4, 19, 20, 21, 22, 23, 24, 25, 66, 67))
+        require(code in setOf(3, 4, 19, 20, 21, 22, 23, 24, 25, 66, 67, 164))
         return "input keyevent $code"
     }
 }

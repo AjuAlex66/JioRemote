@@ -21,4 +21,8 @@ class RemoteCommandsTest {
         assertEquals("input keyevent 4", RemoteCommands.key(4))
         assertTrue(runCatching { RemoteCommands.key(999) }.isFailure)
     }
+
+    @Test fun muteEmitsAndroidVolumeMuteKey() {
+        assertEquals("input keyevent 164", RemoteCommands.key(164))
+    }
 }

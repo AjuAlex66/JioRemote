@@ -52,7 +52,13 @@ internal data class RemoteNotice(
     val isError: Boolean = false,
 )
 
-internal data class ChannelDraft(val name: String = "", val id: String = "", val error: String? = null)
+internal data class ChannelDraft(
+    val key: String? = null,
+    val name: String = "",
+    val id: String = "",
+    val needsPlaybackId: Boolean = false,
+    val error: String? = null,
+)
 
 internal data class RemoteUiState(
     val host: String = "",
@@ -169,7 +175,18 @@ internal class RemoteViewModel(
     }
 
     fun launch() = sendCommand({ RemoteCommands.launchApp }, "JioTV+ launch requested.")
-    fun play(channel: Channel) = sendCommand({ RemoteCommands.channel(channel.id) }, "Requested ${channel.name} on your TV.")
+    fun play(channel: Channel) {
+        val id = channel.id
+        when {
+            id == null -> openEditChannel(channel)
+            state.value.connection != ConnectionStatus.Connected -> mutableState.update {
+                val notice = it.notice?.takeIf(RemoteNotice::isError)
+                    ?: RemoteNotice(null, "Connect to your TV to open ${channel.name}.")
+                it.copy(notice = notice)
+            }
+            else -> sendCommand({ RemoteCommands.channel(id) }, "Requested ${channel.name} on your TV.")
+        }
+    }
     fun keyEvent(code: Int) = sendCommand({ RemoteCommands.key(code) }, null)
 
     private fun sendCommand(command: () -> String, success: String?) {
@@ -245,6 +262,9 @@ internal class RemoteViewModel(
     }
 
     fun openAddChannel() = mutableState.update { it.copy(channelDraft = ChannelDraft()) }
+    fun openEditChannel(channel: Channel) = mutableState.update {
+        it.copy(channelDraft = ChannelDraft(channel.key, channel.name, channel.id.orEmpty(), needsPlaybackId = channel.id == null))
+    }
     fun closeAddChannel() = mutableState.update { it.copy(channelDraft = null) }
     fun setChannelName(name: String) = editDraft { it.copy(name = name, error = null) }
     fun setChannelId(id: String) = editDraft { it.copy(id = id, error = null) }
@@ -253,34 +273,41 @@ internal class RemoteViewModel(
         mutableState.update { it.copy(channelDraft = it.channelDraft?.let(transform)) }
     }
 
-    fun addChannel() {
+    fun saveChannel() {
         val current = state.value
         val draft = current.channelDraft ?: return
         val candidate = try {
-            Channel(draft.id.trim(), draft.name.trim())
+            val id = draft.id.trim().ifBlank { null }
+            require(id != null) { "Enter a verified JioTV+ channel ID." }
+            Channel(draft.key ?: "custom:${java.util.UUID.randomUUID()}", draft.name.trim(), id)
         } catch (e: IllegalArgumentException) {
             editDraft { it.copy(error = e.message) }
             return
         }
         val error = when {
-            current.channels.any { it.id == candidate.id } -> "That channel ID already exists."
-            current.channels.size >= 40 -> "You can save up to 40 channels."
+            current.channels.any { it.id == candidate.id && it.key != candidate.key } -> "That channel ID already exists."
+            draft.key == null && current.channels.size >= 40 -> "You can save up to 40 channels."
             else -> null
         }
         if (error != null) {
             editDraft { it.copy(error = error) }
             return
         }
-        updateChannels(current.channels + candidate)
+        val revised = if (draft.key == null) current.channels + candidate
+        else current.channels.map { if (it.key == draft.key) candidate else it }
+        updateChannels(revised)
     }
 
-    fun confirmRemove(channel: Channel) = mutableState.update { it.copy(removingChannel = channel) }
+    fun confirmRemove() = mutableState.update { current ->
+        val channel = current.channels.firstOrNull { it.key == current.channelDraft?.key }
+        current.copy(channelDraft = null, removingChannel = channel)
+    }
     fun cancelRemove() = mutableState.update { it.copy(removingChannel = null) }
 
     fun removeChannel() {
         val current = state.value
         val channel = current.removingChannel ?: return
-        updateChannels(current.channels.filterNot { it.id == channel.id })
+        updateChannels(current.channels.filterNot { it.key == channel.key })
     }
 
     private fun updateChannels(channels: List<Channel>) {

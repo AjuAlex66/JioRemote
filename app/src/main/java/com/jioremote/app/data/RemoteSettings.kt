@@ -47,26 +47,33 @@ internal class RemoteSettings(context: Context) {
     private val prefs = context.getSharedPreferences(LEGACY_SETTINGS, Context.MODE_PRIVATE)
 
     fun loadChannels(): List<Channel> {
-        val raw = prefs.getString("channels", null) ?: return listOf(Channel("304189", "Sun TV"))
-        return try {
-            val array = JSONArray(raw)
-            buildList {
-                for (i in 0 until array.length()) {
-                    val entry = array.getJSONObject(i)
-                    runCatching { Channel(entry.getString("id"), entry.getString("name")) }
-                        .getOrNull()?.let(::add)
-                }
-            }.distinctBy { it.id }
-        } catch (_: Exception) {
-            listOf(Channel("304189", "Sun TV"))
+        val version = prefs.getInt("channels_catalogue_version", 0)
+        val saved = prefs.getString("channels", null)?.let(::decodeChannels)
+        return ChannelCatalogue.load(saved, version).also {
+            if (version < ChannelCatalogue.version) saveChannels(it)
         }
+    }
+
+    private fun decodeChannels(raw: String): List<Channel>? {
+        val array = runCatching { JSONArray(raw) }.getOrNull() ?: return null
+        return buildList {
+            for (i in 0 until array.length()) {
+                val entry = array.optJSONObject(i) ?: continue
+                val id = if (entry.isNull("id")) null else entry.getString("id")
+                val key = entry.optString("key").ifBlank { "legacy:$id" }
+                runCatching { Channel(key, entry.getString("name"), id) }.getOrNull()?.let(::add)
+            }
+        }.distinctBy { it.key }
     }
 
     fun saveChannels(channels: List<Channel>) {
         val array = JSONArray()
         channels.forEach { channel ->
-            array.put(JSONObject().put("id", channel.id).put("name", channel.name))
+            array.put(JSONObject().put("key", channel.key).put("id", channel.id).put("name", channel.name))
         }
-        prefs.edit { putString("channels", array.toString()) }
+        prefs.edit {
+            putString("channels", array.toString())
+            putInt("channels_catalogue_version", ChannelCatalogue.version)
+        }
     }
 }
