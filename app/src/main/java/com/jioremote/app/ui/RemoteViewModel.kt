@@ -351,7 +351,7 @@ internal class RemoteViewModel(
         val error = when {
             candidate.number != null && current.channels.any { it.number == candidate.number && it.key != candidate.key } ->
                 "That channel number already exists."
-            draft.key == null && current.channels.size >= 40 -> "You can save up to 40 channels."
+            draft.key == null && current.channels.size >= 200 -> "You can save up to 200 channels."
             else -> null
         }
         if (error != null) {

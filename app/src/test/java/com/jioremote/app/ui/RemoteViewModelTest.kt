@@ -166,7 +166,7 @@ class RemoteViewModelTest {
     }
 
     @Test fun unconfiguredChannelOpensEditorWithoutSendingACommand() = runTest(dispatcher) {
-        val channel = DefaultChannel.Flowers.create()
+        val channel = DefaultChannel.Flowers.create().copy(number = null)
         val saved = mutableListOf<Channel>()
         val vm = RemoteViewModel(settings(), { listOf(channel) }, { saved.addAll(it) },
             { _, _, _ -> error("Unexpected ADB command") }, { _, _, _ -> error("Unexpected pairing") })
@@ -252,6 +252,32 @@ class RemoteViewModelTest {
         reopened.removeChannel()
         assertEquals(2, saved.size)
         assertTrue(saved.none { it.key == added.key })
+    }
+
+    @Test fun expandedCatalogueLeavesRoomForCustomChannelsAndAppliesLimitOnlyToNewRows() = runTest(dispatcher) {
+        var saved = DefaultChannel.entries.map { it.create() }
+        val vm = model(settings(), loadChannels = { saved }, saveChannels = { saved = it })
+        runCurrent()
+
+        repeat(200 - saved.size) { index ->
+            vm.openAddChannel()
+            vm.setChannelName("Custom $index")
+            vm.setChannelNumber((9000 + index).toString())
+            vm.saveChannel()
+        }
+        assertEquals(200, saved.size)
+        vm.openAddChannel()
+        vm.setChannelName("Extra")
+        vm.saveChannel()
+        assertEquals(200, saved.size)
+        assertNotNull(vm.state.value.channelDraft?.error)
+        vm.closeAddChannel()
+
+        val last = saved.last()
+        vm.openEditChannel(last)
+        vm.setChannelName("Renamed")
+        vm.saveChannel()
+        assertEquals(last.copy(name = "Renamed"), saved.last())
     }
 
     private fun TestScope.settings(): TvConnectionStore {
