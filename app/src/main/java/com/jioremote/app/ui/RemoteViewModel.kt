@@ -9,6 +9,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.jioremote.app.adb.AdbRemoteClient
 import com.jioremote.app.adb.RemoteCommands
+import com.jioremote.app.adb.TvPowerAction
+import com.jioremote.app.adb.TvPowerResult
 import com.jioremote.app.data.Channel
 import com.jioremote.app.data.ChannelLogoStore
 import com.jioremote.app.data.RemoteSettings
@@ -48,7 +50,7 @@ internal fun validatedPairingCode(raw: String): String = raw.trim().also {
 }
 
 internal enum class ConnectionStatus { Loading, Disconnected, Connecting, Connected, Error }
-internal enum class RemoteOperation { Save, Connect, Pair, Command }
+internal enum class RemoteOperation { Save, Connect, Pair, Command, Power }
 
 internal data class RemoteNotice(
     val operation: RemoteOperation?,
@@ -81,9 +83,10 @@ internal data class RemoteUiState(
     val channelDraft: ChannelDraft? = null,
     val tuningChannelKey: String? = null,
     val removingChannel: Channel? = null,
+    val pendingPowerAction: TvPowerAction? = null,
 ) {
     val isBusy: Boolean get() = connection == ConnectionStatus.Loading || operation != null
-    val canSend: Boolean get() = !isBusy && connection == ConnectionStatus.Connected
+    val canSend: Boolean get() = !isBusy && pendingPowerAction == null && connection == ConnectionStatus.Connected
 }
 
 internal class RemoteViewModel(
@@ -93,6 +96,7 @@ internal class RemoteViewModel(
     private val runCommand: suspend (String, Int, String) -> String,
     private val pairDevice: suspend (String, Int, String) -> Unit,
     private val logoStore: ChannelLogoStore? = null,
+    private val powerCommand: suspend (String, Int, TvPowerAction) -> TvPowerResult = { _, _, _ -> TvPowerResult.Unsupported },
     private val importLogo: (suspend (Uri) -> String)? = null,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(RemoteUiState(channels = loadChannels()))
@@ -200,6 +204,41 @@ internal class RemoteViewModel(
     }
     fun keyEvent(code: Int) = sendCommand({ RemoteCommands.key(code) }, null)
 
+    fun requestPowerAction(action: TvPowerAction) {
+        if (state.value.canSend) mutableState.update { it.copy(pendingPowerAction = action) }
+    }
+
+    fun cancelPowerAction() {
+        mutableState.update { it.copy(pendingPowerAction = null) }
+    }
+
+    fun confirmPowerAction(action: TvPowerAction) {
+        val current = state.value
+        if (current.pendingPowerAction != action || current.isBusy || current.connection != ConnectionStatus.Connected) return
+
+        perform(RemoteOperation.Power) {
+            val request = if (action == TvPowerAction.Reboot) "reboot" else "power-off"
+            val result = powerCommand(current.host, current.port.toInt(), action)
+            val message = when (result) {
+                TvPowerResult.Dispatched -> when (action) {
+                    TvPowerAction.Reboot -> "Reboot request sent. Reconnect once the TV is back."
+                    TvPowerAction.PowerOff -> "Power-off request sent. You may need the physical remote to turn the TV on."
+                }
+                TvPowerResult.PermissionDenied -> "The TV denied permission for the $request command."
+                TvPowerResult.Unsupported -> "The TV does not support the $request command over ADB."
+                TvPowerResult.Rejected -> "The TV rejected the $request command."
+            }
+            val dispatched = result == TvPowerResult.Dispatched
+            mutableState.update {
+                it.copy(
+                    connection = if (dispatched) ConnectionStatus.Disconnected else it.connection,
+                    notice = RemoteNotice(RemoteOperation.Power, message, isError = !dispatched),
+                )
+            }
+            null
+        }
+    }
+
     private fun sendCommand(command: () -> String, success: String?, channelKey: String? = null) {
         val current = state.value
         if (!current.canSend) return
@@ -232,6 +271,7 @@ internal class RemoteViewModel(
         mutableState.update {
             it.copy(
                 operation = operation,
+                pendingPowerAction = if (operation == RemoteOperation.Power) null else it.pendingPowerAction,
                 connection = if (operation == RemoteOperation.Connect) ConnectionStatus.Connecting else it.connection,
                 notice = null,
             )
@@ -239,9 +279,7 @@ internal class RemoteViewModel(
         viewModelScope.launch {
             try {
                 val message = task()
-                mutableState.update {
-                    it.copy(notice = message?.let { RemoteNotice(operation, it) })
-                }
+                if (message != null) mutableState.update { it.copy(notice = RemoteNotice(operation, message)) }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -250,11 +288,12 @@ internal class RemoteViewModel(
                     RemoteOperation.Connect -> "Couldn’t verify the TV. Check its IP and connection port, then approve this phone on the TV."
                     RemoteOperation.Pair -> "Pairing failed. Open a new pairing prompt on the TV and use its port and code."
                     RemoteOperation.Command -> "The TV command failed. Check the TV and its ADB authorization, then reconnect."
+                    RemoteOperation.Power -> "Couldn’t confirm that the TV power request was sent. Reconnect to check the TV."
                 }
                 mutableState.update {
                     it.copy(
                         connection = when (operation) {
-                            RemoteOperation.Connect, RemoteOperation.Command -> ConnectionStatus.Error
+                            RemoteOperation.Connect, RemoteOperation.Command, RemoteOperation.Power -> ConnectionStatus.Error
                             else -> it.connection
                         },
                         notice = RemoteNotice(operation, message, true),
@@ -433,7 +472,7 @@ internal class RemoteViewModel(
                 val settings = RemoteSettings(application)
                 val remote = AdbRemoteClient(application)
                 val logos = ChannelLogoStore(application.filesDir.resolve(ChannelLogoStore.directoryName))
-                RemoteViewModel(settings.connection, settings::loadChannels, settings::saveChannels, remote::run, remote::pair, logos) { uri ->
+                RemoteViewModel(settings.connection, settings::loadChannels, settings::saveChannels, remote::run, remote::pair, logos, remote::power) { uri ->
                     withContext(Dispatchers.IO) { logos.importPhoto(application.contentResolver, uri) }
                 }
             }

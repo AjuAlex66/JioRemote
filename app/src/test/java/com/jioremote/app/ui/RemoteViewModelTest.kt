@@ -3,6 +3,9 @@ package com.jioremote.app.ui
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.ViewModelStore
 import com.jioremote.app.adb.RemoteCommands
+import com.jioremote.app.adb.TvPowerAction
+import com.jioremote.app.adb.TvPowerResult
+import java.io.EOFException
 import com.jioremote.app.data.Channel
 import com.jioremote.app.data.DefaultChannel
 import com.jioremote.app.data.TvConnection
@@ -278,6 +281,132 @@ class RemoteViewModelTest {
         vm.setChannelName("Renamed")
         vm.saveChannel()
         assertEquals(last.copy(name = "Renamed"), saved.last())
+    }
+
+    @Test fun disconnectedStateDisablesPowerAndRejectsConfirmation() = runTest(dispatcher) {
+        val vm = powerModel { _, _, _ -> error("Disconnected TV must not receive a power command") }
+        runCurrent()
+
+        assertFalse(vm.state.value.canSend)
+        vm.requestPowerAction(TvPowerAction.Reboot)
+        vm.confirmPowerAction(TvPowerAction.Reboot)
+        runCurrent()
+        assertNull(vm.state.value.pendingPowerAction)
+        assertNull(vm.state.value.operation)
+    }
+
+    @Test fun openingAndCancelingConfirmationNeverSendsACommand() = runTest(dispatcher) {
+        val vm = powerModel { _, _, _ -> error("Cancellation must not send a power command") }
+        connectPowerModel(vm)
+
+        for (action in TvPowerAction.entries) {
+            vm.requestPowerAction(action)
+            assertEquals(action, vm.state.value.pendingPowerAction)
+            assertFalse(vm.state.value.canSend)
+            vm.cancelPowerAction()
+            vm.confirmPowerAction(action)
+            runCurrent()
+            assertNull(vm.state.value.pendingPowerAction)
+            assertTrue(vm.state.value.canSend)
+        }
+    }
+
+    @Test fun confirmedPowerActionDispatchesOnceAndBlocksConflictingCommands() = runTest(dispatcher) {
+        val actions = mutableListOf<TvPowerAction>()
+        val reply = CompletableDeferred<TvPowerResult>()
+        val vm = powerModel { host, port, action ->
+            assertEquals("192.168.1.82", host)
+            assertEquals(5555, port)
+            actions += action
+            reply.await()
+        }
+        connectPowerModel(vm)
+        vm.requestPowerAction(TvPowerAction.Reboot)
+        vm.requestPowerAction(TvPowerAction.PowerOff)
+        vm.confirmPowerAction(TvPowerAction.PowerOff)
+        runCurrent()
+        assertTrue(actions.isEmpty())
+
+        vm.confirmPowerAction(TvPowerAction.Reboot)
+        vm.confirmPowerAction(TvPowerAction.Reboot)
+        vm.requestPowerAction(TvPowerAction.PowerOff)
+        vm.play(DefaultChannel.AsianetMoviesHd.create())
+        vm.keyEvent(164)
+        runCurrent()
+        assertEquals(listOf(TvPowerAction.Reboot), actions)
+        assertEquals(RemoteOperation.Power, vm.state.value.operation)
+        assertFalse(vm.state.value.canSend)
+
+        reply.complete(TvPowerResult.Dispatched)
+        runCurrent()
+        assertEquals(ConnectionStatus.Disconnected, vm.state.value.connection)
+        assertEquals("Reboot request sent. Reconnect once the TV is back.", vm.state.value.notice?.text)
+        assertFalse(vm.state.value.notice!!.isError)
+        assertFalse(vm.state.value.canSend)
+        vm.connect()
+        runCurrent()
+        assertTrue(vm.state.value.canSend)
+    }
+
+    @Test fun powerOffDispatchReportsOnlyThatTheRequestWasSent() = runTest(dispatcher) {
+        val vm = powerModel { _, _, action ->
+            assertEquals(TvPowerAction.PowerOff, action)
+            TvPowerResult.Dispatched
+        }
+        connectPowerModel(vm)
+        vm.requestPowerAction(TvPowerAction.PowerOff)
+        vm.confirmPowerAction(TvPowerAction.PowerOff)
+        runCurrent()
+
+        assertEquals(ConnectionStatus.Disconnected, vm.state.value.connection)
+        assertTrue(vm.state.value.notice!!.text.startsWith("Power-off request sent."))
+        assertFalse(vm.state.value.notice!!.isError)
+    }
+
+    @Test fun explicitPowerRejectionsKeepTheConnectionAndExplainTheError() = runTest(dispatcher) {
+        var result = TvPowerResult.PermissionDenied
+        val vm = powerModel { _, _, _ -> result }
+        connectPowerModel(vm)
+
+        for ((failure, reason) in listOf(
+            TvPowerResult.PermissionDenied to "denied permission",
+            TvPowerResult.Unsupported to "does not support",
+            TvPowerResult.Rejected to "rejected",
+        )) {
+            result = failure
+            vm.requestPowerAction(TvPowerAction.PowerOff)
+            vm.confirmPowerAction(TvPowerAction.PowerOff)
+            runCurrent()
+            assertTrue(vm.state.value.canSend)
+            assertTrue(vm.state.value.notice!!.isError)
+            assertTrue(vm.state.value.notice!!.text.contains(reason))
+        }
+    }
+
+    @Test fun connectionLossBeforeDispatchIsReportedAsUnconfirmed() = runTest(dispatcher) {
+        val vm = powerModel { _, _, _ -> throw EOFException() }
+        connectPowerModel(vm)
+        vm.requestPowerAction(TvPowerAction.PowerOff)
+        vm.confirmPowerAction(TvPowerAction.PowerOff)
+        runCurrent()
+
+        assertEquals(ConnectionStatus.Error, vm.state.value.connection)
+        assertTrue(vm.state.value.notice!!.isError)
+        assertTrue(vm.state.value.notice!!.text.contains("Couldn’t confirm"))
+    }
+
+    private fun TestScope.powerModel(command: suspend (String, Int, TvPowerAction) -> TvPowerResult) =
+        RemoteViewModel(settings(), { emptyList() }, {}, { _, _, shellCommand ->
+            check(shellCommand == RemoteCommands.probe)
+            "jioremote-ready"
+        }, { _, _, _ -> error("Unexpected pairing") }, powerCommand = command).also { models.put("power", it) }
+
+    private fun TestScope.connectPowerModel(vm: RemoteViewModel) {
+        runCurrent()
+        vm.setHost("192.168.1.82")
+        vm.connect()
+        runCurrent()
+        assertTrue(vm.state.value.canSend)
     }
 
     private fun TestScope.settings(): TvConnectionStore {

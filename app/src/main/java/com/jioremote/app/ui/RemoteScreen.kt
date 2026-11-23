@@ -17,6 +17,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.jioremote.app.adb.TvPowerAction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,7 +47,7 @@ internal fun RemoteScreen(state: RemoteUiState, viewModel: RemoteViewModel) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = { VolumeBar(state.canSend, viewModel::keyEvent) },
+        bottomBar = { BottomControls(state.canSend, viewModel::keyEvent, viewModel::requestPowerAction) },
     ) { safePadding ->
         Box(Modifier.fillMaxSize().padding(safePadding), contentAlignment = Alignment.TopCenter) {
             Column(
@@ -91,6 +92,26 @@ internal fun RemoteScreen(state: RemoteUiState, viewModel: RemoteViewModel) {
             onDismissRequest = { settingsOpen = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) { SettingsContent(state, viewModel) }
+    }
+
+    state.pendingPowerAction?.let { action ->
+        val reboot = action == TvPowerAction.Reboot
+        AlertDialog(
+            onDismissRequest = viewModel::cancelPowerAction,
+            title = { Text(if (reboot) "Reboot TV?" else "Power off TV?") },
+            text = {
+                Text(
+                    if (reboot) "Your TV will restart, and the connection will be temporarily lost."
+                    else "Your TV will shut down completely. You may need the physical remote or TV power button to turn it on again."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmPowerAction(action) }) {
+                    Text(if (reboot) "Reboot" else "Power Off")
+                }
+            },
+            dismissButton = { TextButton(onClick = viewModel::cancelPowerAction) { Text("Cancel") } },
+        )
     }
 
     state.channelDraft?.let { ChannelEditor(it, viewModel, state.removingChannel != null) }

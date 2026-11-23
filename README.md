@@ -22,6 +22,10 @@ Install `app/build/outputs/apk/debug/app-debug.apk` on an Android 9 or newer pho
 
 TV settings, channel order, and custom logos stay on the phone. The app copies chosen logos into private storage. Keep ADB on your trusted LAN and avoid port-forwarding it.
 
+## TV power controls
+
+**Reboot TV** and **Power Off TV** are below the volume controls. Each requires confirmation. After a request is sent, JioRemote disconnects and lets you reconnect when the TV is ready. Power Off uses the TV's shutdown option, so you may need the physical remote or TV power button to turn the TV back on.
+
 ## Default channels
 
 | Default channel | Number |
@@ -42,3 +46,4 @@ Bundled artwork comes from [JioStar's media toolkit](https://www.jiostar.com/med
 - The clean Gradle build and lint completed with 26 passing unit tests and zero lint errors. Tests cover all 63 retired keys, retained rows and numbers, earlier catalogue versions, logo cleanup, and the existing ADB digit sequence.
 - An in-place upgrade on the A063 phone reduced 69 saved rows to seven. The six original defaults and one manually added channel remained in their saved order. A cold restart preserved the result. The saved TV endpoint and ADB identity remained unchanged.
 - The upgraded app opened JioTV+ and tuned the physical TV to Asianet Movies HD `1827`. Volume Up, Volume Down, and Mute responded on the TV. Adding, long-press editing, drag reordering across restart, and confirmed deletion worked on the phone using a temporary channel.
+- The power-control update passed 37 unit tests in a clean build. On the A063 phone, both confirmation dialogs opened and canceled while the TV stayed connected with the same boot ID. The two rows fit above the navigation bar in a compact viewport. The TV's reboot binary advertises `-p`, and live reboot and shutdown remain unverified.

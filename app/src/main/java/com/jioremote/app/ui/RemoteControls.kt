@@ -17,46 +17,57 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import com.jioremote.app.adb.TvPowerAction
 import kotlin.math.cos
 import kotlin.math.sin
 
 @Composable
-internal fun VolumeBar(enabled: Boolean, onKey: (Int) -> Unit) {
-    val haptics = LocalHapticFeedback.current
+internal fun BottomControls(
+    enabled: Boolean,
+    onKey: (Int) -> Unit,
+    onPowerAction: (TvPowerAction) -> Unit,
+) {
     Surface(tonalElevation = 3.dp) {
         Box(Modifier.fillMaxWidth().navigationBarsPadding(), contentAlignment = Alignment.Center) {
-            Row(
+            Column(
                 Modifier.widthIn(max = 480.dp).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val controls = listOf(
-                    Triple(RemoteSymbol.Mute, "Mute", 164),
-                    Triple(RemoteSymbol.VolumeDown, "Volume down", 25),
-                    Triple(RemoteSymbol.VolumeUp, "Volume up", 24),
-                )
-                for ((icon, label, code) in controls) {
-                    FilledTonalButton(
-                        onClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
-                            onKey(code)
-                        },
-                        enabled = enabled,
-                        modifier = Modifier.weight(1f).heightIn(min = 56.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            RemoteIcon(icon, Modifier.size(21.dp))
-                            Text(label, style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BottomControl(RemoteSymbol.Mute, "Mute", enabled) { onKey(164) }
+                    BottomControl(RemoteSymbol.VolumeDown, "Volume down", enabled) { onKey(25) }
+                    BottomControl(RemoteSymbol.VolumeUp, "Volume up", enabled) { onKey(24) }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BottomControl(RemoteSymbol.Reboot, "Reboot TV", enabled) { onPowerAction(TvPowerAction.Reboot) }
+                    BottomControl(RemoteSymbol.Power, "Power Off TV", enabled) { onPowerAction(TvPowerAction.PowerOff) }
                 }
             }
         }
     }
 }
 
+@Composable
+private fun RowScope.BottomControl(symbol: RemoteSymbol, label: String, enabled: Boolean, onClick: () -> Unit) {
+    val haptics = LocalHapticFeedback.current
+    FilledTonalButton(
+        onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+            onClick()
+        },
+        enabled = enabled,
+        modifier = Modifier.weight(1f).heightIn(min = 56.dp),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            RemoteIcon(symbol, Modifier.size(21.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
 internal enum class RemoteSymbol {
-    Tv, Settings, Play, Drag, Mute, VolumeDown, VolumeUp,
+    Tv, Settings, Play, Drag, Mute, VolumeDown, VolumeUp, Reboot, Power,
 }
 
 @Composable
@@ -90,6 +101,14 @@ internal fun RemoteIcon(symbol: RemoteSymbol, modifier: Modifier, tint: Color = 
                 for (x in listOf(9, 15)) for (y in listOf(6, 12, 18)) {
                     drawCircle(tint, unit * 1.35f, point(x, y))
                 }
+            }
+            RemoteSymbol.Reboot -> {
+                drawArc(tint, 212f, 303f, false, point(4, 4), Size(16 * unit, 16 * unit), style = stroke)
+                drawPath(trace(3 to 4, 4 to 9, 9 to 8), tint, style = stroke)
+            }
+            RemoteSymbol.Power -> {
+                drawArc(tint, -48f, 276f, false, point(4, 5), Size(16 * unit, 16 * unit), style = stroke)
+                line(12, 2, 12, 11)
             }
             RemoteSymbol.Mute, RemoteSymbol.VolumeDown, RemoteSymbol.VolumeUp -> {
                 drawPath(trace(3 to 9, 6 to 9, 11 to 5, 11 to 19, 6 to 15, 3 to 15).apply { close() }, tint, style = stroke)
