@@ -24,17 +24,21 @@ TV settings, channel order, and custom logos stay on the phone. The app copies c
 
 ## Default channels
 
-A fresh install includes 69 defaults from the supplied catalogue: 38 Malayalam, 7 English movies, 7 wildlife/documentary, and 17 Tamil. The app supports 200 saved rows. Numbers are stored as digit strings so leading zeros are preserved.
+| Default channel | Number |
+| --- | --- |
+| Asianet HD | `1806` |
+| Flowers | `555` |
+| Mazhavil Manorama HD | `1818` |
+| Asianet Movies HD | `1827` |
+| Asianet Plus | `1809` |
+| Sun TV | `1503` |
 
-The upgrade retains saved order, custom rows, edited names and numbers, and logo associations. It skips additions already represented by saved names or numbers and leaves previously deleted defaults alone. Sun TV's historical playback ID `304189` stays separate from channel numbers. The fresh catalogue suggests `1503` for the original Sun TV entry and `1504` for Sun TV (SD).
-
-Asianet Movies HD `1827` was confirmed when tuning from the phone. Targeted checks with the TV's ADB interface also identified Flowers `555`, Reporter TV `1855`, and Discovery Tamil `1525`. The TV reported “No channels found” for Janam TV `1492` and Zee Keralam `1812` during spot checks. Kite Victers `580` also remains unconfirmed. These and other unverified entries retain the supplied numbers as editable suggestions.
+Catalogue version 4 removes the 63 extra v3 defaults by their saved keys. The upgrade keeps manually added channels and preserves the names, numbers, logos, and relative order of the remaining rows. Previously deleted defaults stay deleted. You can still save up to 200 rows. Sun TV's legacy playback ID `304189` stays separate from channel numbers.
 
 Bundled artwork comes from [JioStar's media toolkit](https://www.jiostar.com/mediatoolkit/all-logos/), the [Flowers broadcaster site](https://www.flowerstv.in/about-us/), and provider assets for [Mazhavil Manorama HD](https://xstreamcp-assets-msp.streamready.in/assets/LIVETV/LIVECHANNEL/LIVETV_LIVETVCHANNEL_MAZHAVIL_MANORAMA_HD/images/LOGO_HD/image.png) and [Sun TV](https://xstreamcp-assets-msp.streamready.in/assets/LIVETV/LIVECHANNEL/LIVETV_LIVETVCHANNEL_SUN_TV/images/LOGO_HD/image.png).
 
 ## Validation
 
-- The clean build, Android lint, and all 29 unit tests passed. Coverage includes catalogue size and uniqueness, migration and duplicate handling, the 200-row limit, serialized tuning, and the 150 ms digit sequence.
-- The A063 phone upgraded from catalogue version 2 to 3. All seven existing rows retained their positions and saved values. A cold restart preserved the migrated list without reinserting rows.
-- On the connected TV, the updated app opened JioTV+, tuned to Asianet Movies HD, and exercised Volume Up, Volume Down, Mute, and reconnect.
-- The expanded list scrolled to the final row above the fixed volume bar. A temporary channel was added, reordered, edited by long-press, and deleted after confirmation. Its system-picker photo survived a cold restart in app-private storage and was removed on deletion.
+- The clean Gradle build and lint completed with 26 passing unit tests and zero lint errors. Tests cover all 63 retired keys, retained rows and numbers, earlier catalogue versions, logo cleanup, and the existing ADB digit sequence.
+- An in-place upgrade on the A063 phone reduced 69 saved rows to seven. The six original defaults and one manually added channel remained in their saved order. A cold restart preserved the result. The saved TV endpoint and ADB identity remained unchanged.
+- The upgraded app opened JioTV+ and tuned the physical TV to Asianet Movies HD `1827`. Volume Up, Volume Down, and Mute responded on the TV. Adding, long-press editing, drag reordering across restart, and confirmed deletion worked on the phone using a temporary channel.
