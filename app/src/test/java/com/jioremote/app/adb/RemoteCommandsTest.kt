@@ -5,24 +5,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RemoteCommandsTest {
-    @Test fun knownSunTvDeepLinkUsesVerifiedIdAndPackage() {
+    @Test fun knownChannelEmitsDigitsInOrderWithThree150MillisecondPauses() {
         assertEquals(
-            "am start -W -a android.intent.action.VIEW -d 'jiotvplus://304189?resume=true&source=watchnext' -p com.jio.media.jiotvplus",
-            RemoteCommands.channel("304189")
+            "input keyevent KEYCODE_1 && sleep 0.150 && input keyevent KEYCODE_8 && sleep 0.150 && " +
+                "input keyevent KEYCODE_2 && sleep 0.150 && input keyevent KEYCODE_7",
+            RemoteCommands.channel("1827"),
         )
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun rejectsMaliciousChannelId() {
-        RemoteCommands.channel("304189'; reboot")
+    @Test fun preservesLeadingZeroAndDoesNotAppendAnExtraKey() {
+        assertEquals("input keyevent KEYCODE_0", RemoteCommands.channel("0"))
+        assertEquals("input keyevent KEYCODE_0 && sleep 0.150 && input keyevent KEYCODE_1", RemoteCommands.channel("01"))
     }
 
-    @Test fun acceptsBackKeyOnlyFromAllowlist() {
-        assertEquals("input keyevent 4", RemoteCommands.key(4))
-        assertTrue(runCatching { RemoteCommands.key(999) }.isFailure)
+    @Test fun rejectsMalformedOrUnsafeChannelNumbers() {
+        for (input in listOf("", " 1827", "1827 ", "+7", "٣", "1234567890123", "1827; reboot", "1\n8")) {
+            assertTrue(input, runCatching { RemoteCommands.channel(input) }.isFailure)
+        }
     }
 
-    @Test fun muteEmitsAndroidVolumeMuteKey() {
+    @Test fun preservesVolumeKeyAllowlist() {
         assertEquals("input keyevent 164", RemoteCommands.key(164))
+        assertEquals("input keyevent 25", RemoteCommands.key(25))
+        assertEquals("input keyevent 24", RemoteCommands.key(24))
+        assertTrue(runCatching { RemoteCommands.key(999) }.isFailure)
     }
 }

@@ -1,76 +1,44 @@
-# JioRemote — Android TV + JioTV+ remote
+# JioRemote
 
-A native **Kotlin + Jetpack Compose** personal Android phone app. It sends ADB commands over your local Wi-Fi to an Android TV running JioTV+ 6.0.8.
+A native Kotlin and Jetpack Compose remote for an Android TV on your local Wi-Fi. It uses the TV's ADB connection to start JioTV+ 6.0.8, tune numbered channels, and control volume.
 
-### What is included
-- Material 3 remote with light and dark themes, a compact connection header, three-column logo grid, and a circular D-pad
-- TV IP and ADB connection port saved locally with DataStore, including migration from earlier builds
-- Explicit Connect and Disconnect controls. The app starts disconnected and enables remote actions after the authenticated shell check succeeds.
-- Private/link-local IPv4 validation so commands cannot be sent to a public Internet address
-- ADB connectivity check (a real shell command)
-- Android 11+ six-digit wireless pairing UI (pairing and connection port are different)
-- JioTV+ launch
-- Six bundled channel logos. Sun TV opens through the **user-verified** JioTV+ deep link.
-- Long-press a tile or use **Settings → Manage channels** to add, edit, or remove channels. Custom names and playback IDs stay saved locally.
-- Home, Back, Mute, volume, OK, and D-pad controls
-- Error/busy states; no server, cloud, or Firebase
+## Build and install
 
-### Open and build
-1. Open this existing project in Android Studio and let Gradle sync. The standard Gradle 8.14.3 wrapper is checked in.
-2. Ensure Android SDK 36 and JDK 17 or newer are available. From the project root run:
-   ```sh
-   ./gradlew testDebugUnitTest assembleDebug lint
-   ```
-3. Install `app/build/outputs/apk/debug/app-debug.apk` on an Android 9+ **phone**. The TV's 32-bit ABI does not determine the phone app's ABI.
+Open the project in Android Studio with Android SDK 36 and JDK 17 or newer, or run the checked-in Gradle wrapper.
 
-Kadb 2.1.1 is intentionally pinned: it is the newest Kadb 2.1.x AAR whose metadata supports this project's API 36 / Gradle 8.14.3 toolchain. Kadb 2.1.2–2.1.5 require compile SDK 37. The required JitPack repository is restricted to Kadb's SPAKE2 dependency group. Conscrypt is included so six-digit pairing also has a TLS provider on an Android 9 phone.
+```sh
+./gradlew testDebugUnitTest assembleDebug lint
+```
 
-### Physical phone + TV validation
-1. Put the phone and TV on the same trusted private LAN. Never expose an ADB port to the Internet or port-forward TCP/5555.
-2. On the TV, enable Developer options and ADB debugging. Choose one path:
-   - **Classic TCP ADB:** enable network debugging and use its connection port (commonly 5555). The TV must approve the phone app's new RSA identity when prompted.
-   - **Android 11+ Wireless debugging:** choose **Pair device with pairing code**. Enter the displayed pairing port and six-digit code in the app, then tap **Pair phone with TV**. After pairing, return to the TV's Wireless debugging screen and enter its separate **IP address & port** connection port in the app’s settings.
-3. Open the settings icon to edit the TV address and ADB connection port. Tap **Save settings** to keep them, or **Connect** to save and verify them in one step. The home header’s dot turns green after an authenticated shell probe. Tap **Disconnect** to disable remote actions on the phone.
-4. Tap **Open JioTV+**, then **Sun TV**. Confirm on the TV that JioTV+ 6.0.8 opens and Sun TV actually plays.
-5. Verify **Back**, **OK**, D-pad, Home, and volume buttons individually; some TV firmware handles Home/volume differently.
-6. Record the phone model/Android version, TV IP and connection mode (not pairing code or private key), UI status/errors, and relevant phone logs. From a Mac attached to the phone for debugging, a useful log command is `adb logcat --pid=$(adb shell pidof com.jioremote.app)`.
+Install `app/build/outputs/apk/debug/app-debug.apk` on an Android 9 or newer phone. Kadb remains pinned to 2.1.1 for the project's API 36 and Gradle 8.14.3 toolchain.
 
-### Default channels
+## Connect and tune
 
-| Channel | JioTV+ 6.0.8 playback ID |
+1. Put the TV and phone on the same trusted private network. Enable ADB debugging on the TV.
+2. In JioRemote settings, enter the TV IP and ADB connection port. For classic ADB, the port is commonly 5555. Approve the phone's RSA key on the TV when prompted.
+3. If using Android 11+ wireless debugging, use the temporary pairing port and six-digit code under **Wireless pairing**. After pairing, use the separate connection port shown on the TV's Wireless debugging screen.
+4. Tap **Connect**, then **Open JioTV+**. With JioTV+ open on the TV, tap a configured channel to send its digits. A single ADB command sends the digits with 150 ms pauses between them.
+5. Tap **Add channel** or long-press a row to enter a channel number or choose a logo. Drag the handle to reorder. TalkBack offers **Move up** and **Move down** on the handle.
+
+TV settings, channel order, and custom logos stay on the phone. The app copies chosen logos into private storage. Keep ADB on your trusted LAN and avoid port-forwarding it.
+
+## Default channels
+
+| Channel | Verified TV channel number |
 | --- | --- |
 | Asianet HD | Needs configuration |
 | Flowers | Needs configuration |
 | Mazhavil Manorama HD | Needs configuration |
-| Asianet Movies HD | Needs configuration |
+| Asianet Movies HD | `1827` |
 | Asianet Plus | Needs configuration |
-| Sun TV | `304189`, verified on the TV |
+| Sun TV | Needs configuration |
 
-Tap an unconfigured logo to enter a verified JioTV+ playback ID. DTH and programme-guide numbers should only be used if verified as working JioTV+ deep-link IDs. Existing saved channel names and IDs carry over during the one-time catalogue upgrade.
+The upgrade preserves saved channels, order, names, and logo associations. Historical JioTV+ playback IDs are kept separately and are never used for numeric tuning. Sun TV's historical ID `304189` has no verified channel-number equivalent.
 
-Artwork comes from [JioStar’s media toolkit](https://www.jiostar.com/mediatoolkit/all-logos/), the [Flowers broadcaster site](https://www.flowerstv.in/about-us/), and the provider assets for [Mazhavil Manorama HD](https://xstreamcp-assets-msp.streamready.in/assets/LIVETV/LIVECHANNEL/LIVETV_LIVETVCHANNEL_MAZHAVIL_MANORAMA_HD/images/LOGO_HD/image.png) and [Sun TV](https://xstreamcp-assets-msp.streamready.in/assets/LIVETV/LIVECHANNEL/LIVETV_LIVETVCHANNEL_SUN_TV/images/LOGO_HD/image.png).
+Bundled artwork comes from [JioStar's media toolkit](https://www.jiostar.com/mediatoolkit/all-logos/), the [Flowers broadcaster site](https://www.flowerstv.in/about-us/), and provider assets for [Mazhavil Manorama HD](https://xstreamcp-assets-msp.streamready.in/assets/LIVETV/LIVECHANNEL/LIVETV_LIVETVCHANNEL_MAZHAVIL_MANORAMA_HD/images/LOGO_HD/image.png) and [Sun TV](https://xstreamcp-assets-msp.streamready.in/assets/LIVETV/LIVECHANNEL/LIVETV_LIVETVCHANNEL_SUN_TV/images/LOGO_HD/image.png).
 
-### Remote redesign validation
+## Validation
 
-- `./gradlew testDebugUnitTest assembleDebug lint` completed with 18 passing unit tests and zero lint errors. Tests cover catalogue seeding and upgrades, saved settings, unconfigured tiles, the exact Sun TV command, and the Mute keycode.
-- The Android 15 phone displayed six logo-only tiles in both themes, including at a compact viewport. The remote buttons remained reachable by scrolling. The saved TV endpoint appeared in settings, and tapping Flowers opened the playback-ID editor.
-- On the physical TV, the redesigned phone app sent the Sun TV VIEW intent for `304189`, and the TV input queue registered the OK tap. Back returned to the prior TV app.
-
-### Prior physical validation
-
-- Gradle 8.14.3 completed `testDebugUnitTest assembleDebug lint` with 13 passing JVM tests and zero lint errors. The tests cover the exact Sun TV command, endpoint validation, DataStore persistence, and ViewModel operation transitions.
-- A physical Android 15 phone (A063) received an in-place update. Its previous TV IP and connection port migrated to DataStore and survived a cold reopen. The existing app-private ADB identity remained in place.
-- On the ACP75P TV running JioTV+ 6.0.8, the phone connected over classic TCP ADB. **Open JioTV+** brought the JioTV+ activity to the foreground, and the TV activity log recorded the **Sun TV** VIEW intent for channel `304189`. **Back** returned the TV to the previous app, and **Disconnect** returned the phone to editable settings.
-- The TV started its secure video decoder after the phone’s Sun TV request, and the user confirmed visible playback. Six-digit wireless pairing and first-time RSA authorization still need separate physical tests.
-
-### Notes
-- The pairing port (shown with a temporary six-digit code) is NOT the ADB connection port; Android 11+ wireless debugging normally chooses dynamic ports.
-- Android devices may disable ADB or change ports after reboot. Automatic reconnection and mDNS are future enhancements.
-- The ADB private identity is stored only in app-internal storage. Cloud backup and device transfer are disabled for app data.
-- On some Jio TV devices, standard home and volume key events are ignored or handled differently.
-- JioTV+ is a third-party app; this is not an official Jio product.
-- Protect the TV's ADB settings. ADB provides broad device control and is not intended to be exposed to untrusted networks.
-
-### References
-- Kadb: https://github.com/flyfishxu/Kadb (Apache-2.0)
-- Official ADB docs: https://developer.android.com/tools/adb
+- Gradle build, lint, and all 23 unit tests passed. The tests cover tuning order and timing, input validation, catalogue migration, channel editing and reordering, and private logo file persistence and cleanup.
+- On an Android 15 phone, the updated app connected to the existing TV and tuned JioTV+ to **1827 Asianet Movies HD**. The TV reported the expected changes from Volume Up, Volume Down, and Mute. Disconnecting and reconnecting also worked.
+- Phone checks covered both themes, the fixed volume bar while scrolling, drag auto-scroll, channel order after a cold restart, Add and confirmed Delete, and opening the system photo picker.

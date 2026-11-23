@@ -1,5 +1,6 @@
 package com.jioremote.app.data
 
+import android.annotation.SuppressLint
 import android.content.Context
 import androidx.core.content.edit
 import androidx.datastore.core.DataStore
@@ -48,32 +49,41 @@ internal class RemoteSettings(context: Context) {
 
     fun loadChannels(): List<Channel> {
         val version = prefs.getInt("channels_catalogue_version", 0)
-        val saved = prefs.getString("channels", null)?.let(::decodeChannels)
+        val saved = prefs.getString("channels", null)?.let { decodeChannels(it, version) }
         return ChannelCatalogue.load(saved, version).also {
             if (version < ChannelCatalogue.version) saveChannels(it)
         }
     }
 
-    private fun decodeChannels(raw: String): List<Channel>? {
+    private fun decodeChannels(raw: String, version: Int): List<Channel>? {
         val array = runCatching { JSONArray(raw) }.getOrNull() ?: return null
         return buildList {
             for (i in 0 until array.length()) {
                 val entry = array.optJSONObject(i) ?: continue
-                val id = if (entry.isNull("id")) null else entry.getString("id")
-                val key = entry.optString("key").ifBlank { "legacy:$id" }
-                runCatching { Channel(key, entry.getString("name"), id) }.getOrNull()?.let(::add)
+                val legacy = entry.optString(if (version < 2) "id" else "legacyPlaybackId").ifBlank { null }
+                val key = entry.optString("key").ifBlank { "legacy:${legacy ?: i}" }
+                val number = if (version < 2) null else entry.optString("number").ifBlank { null }
+                val logo = entry.optString("logoFile").ifBlank { null }
+                runCatching { Channel(key, entry.getString("name"), number, logo, legacy) }.getOrNull()?.let(::add)
             }
         }.distinctBy { it.key }
     }
 
+    // Confirm the new references reached disk before removing replaced logo files.
+    @SuppressLint("UseKtx")
     fun saveChannels(channels: List<Channel>) {
         val array = JSONArray()
         channels.forEach { channel ->
-            array.put(JSONObject().put("key", channel.key).put("id", channel.id).put("name", channel.name))
+            array.put(JSONObject()
+                .put("key", channel.key)
+                .put("name", channel.name)
+                .put("number", channel.number)
+                .put("logoFile", channel.logoFile)
+                .put("legacyPlaybackId", channel.legacyPlaybackId))
         }
-        prefs.edit {
-            putString("channels", array.toString())
-            putInt("channels_catalogue_version", ChannelCatalogue.version)
+        check(prefs.edit().putString("channels", array.toString())
+            .putInt("channels_catalogue_version", ChannelCatalogue.version).commit()) {
+            "Couldn’t save channels."
         }
     }
 }

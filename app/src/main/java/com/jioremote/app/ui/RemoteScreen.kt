@@ -1,24 +1,15 @@
 package com.jioremote.app.ui
 
-import androidx.annotation.DrawableRes
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -26,120 +17,89 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.jioremote.app.R
-import com.jioremote.app.data.Channel
-import com.jioremote.app.data.DefaultChannel
-
-private enum class RemoteSheet { Settings, Channels }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun RemoteScreen(state: RemoteUiState, viewModel: RemoteViewModel) {
-    var sheet by rememberSaveable { mutableStateOf<RemoteSheet?>(null) }
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val notice = state.notice
-    LaunchedEffect(notice, sheet) {
-        if (notice != null && sheet == null && notice.operation !in setOf(RemoteOperation.Pair, RemoteOperation.Save)) {
-            val settingsAction = notice.isError
+    LaunchedEffect(notice, settingsOpen, state.channelDraft != null) {
+        if (notice != null && !settingsOpen && state.channelDraft == null &&
+            notice.operation !in setOf(RemoteOperation.Pair, RemoteOperation.Save)
+        ) {
+            val offerSettings = notice.isError && state.connection == ConnectionStatus.Error
             val result = snackbar.showSnackbar(
                 notice.text,
-                actionLabel = if (settingsAction) "Settings" else null,
-                withDismissAction = settingsAction,
-                duration = if (settingsAction) SnackbarDuration.Long else SnackbarDuration.Short,
+                actionLabel = if (offerSettings) "Settings" else null,
+                withDismissAction = notice.isError,
+                duration = if (notice.isError) SnackbarDuration.Long else SnackbarDuration.Short,
             )
-            if (result == SnackbarResult.ActionPerformed) sheet = RemoteSheet.Settings
-            else if (!notice.isError) viewModel.clearNotice(notice)
+            if (result == SnackbarResult.ActionPerformed) settingsOpen = true
+            else if (!offerSettings) viewModel.clearNotice(notice)
         }
     }
     LaunchedEffect(state.hostError, state.portError) {
-        if (state.hostError != null || state.portError != null) sheet = RemoteSheet.Settings
+        if (state.hostError != null || state.portError != null) settingsOpen = true
     }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = { VolumeBar(state.canSend, viewModel::keyEvent) },
     ) { safePadding ->
         Box(Modifier.fillMaxSize().padding(safePadding), contentAlignment = Alignment.TopCenter) {
-            LazyColumn(
-                modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 26.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+            Column(
+                Modifier.widthIn(max = 480.dp).fillMaxSize().padding(horizontal = 16.dp),
             ) {
-                item("header") {
-                    ConnectionHeader(
-                        state,
-                        onAction = {
-                            when {
-                                state.connection == ConnectionStatus.Connected -> viewModel.disconnect()
-                                state.host.isBlank() || state.hostError != null || state.portError != null ->
-                                    { sheet = RemoteSheet.Settings }
-                                else -> viewModel.connect()
-                            }
-                        },
-                        onSettings = { sheet = RemoteSheet.Settings },
-                    )
-                }
-                item("launch") {
-                    Button(
-                        onClick = viewModel::launch,
-                        enabled = state.canSend,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp).padding(bottom = 3.dp),
-                        shape = MaterialTheme.shapes.medium,
-                    ) {
-                        RemoteIcon(RemoteSymbol.Play, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Open JioTV+", style = MaterialTheme.typography.titleMedium)
-                    }
-                }
-                if (state.channels.isEmpty()) {
-                    item("empty") {
-                        TextButton(onClick = { sheet = RemoteSheet.Channels }) { Text("Manage channels") }
-                    }
-                }
-                items(state.channels.chunked(3), key = { row -> "channel-${row.first().key}" }) { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { channel ->
-                            ChannelTile(channel, { viewModel.play(channel) }, { viewModel.openEditChannel(channel) }, Modifier.weight(1f))
+                ConnectionHeader(
+                    state,
+                    onAction = {
+                        when {
+                            state.connection == ConnectionStatus.Connected -> viewModel.disconnect()
+                            state.host.isBlank() || state.hostError != null || state.portError != null -> settingsOpen = true
+                            else -> viewModel.connect()
                         }
-                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                    }
+                    },
+                    onSettings = { settingsOpen = true },
+                )
+                Button(
+                    onClick = viewModel::launch,
+                    enabled = state.canSend,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
+                    shape = MaterialTheme.shapes.medium,
+                ) {
+                    RemoteIcon(RemoteSymbol.Play, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Open JioTV+", style = MaterialTheme.typography.titleMedium)
                 }
-                item("remote") {
-                    RemoteControls(state.canSend, viewModel::keyEvent, Modifier.padding(top = 5.dp))
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Channels", style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = viewModel::openAddChannel) { Text("Add channel") }
                 }
-            }
-            if (state.operation == RemoteOperation.Command) {
-                LinearProgressIndicator(Modifier.align(Alignment.TopCenter).fillMaxWidth())
-            }
-        }
-    }
-
-    sheet?.let { active ->
-        key(active) {
-            ModalBottomSheet(
-                onDismissRequest = { sheet = null },
-                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-                containerColor = MaterialTheme.colorScheme.surface,
-            ) {
-                when (active) {
-                    RemoteSheet.Settings -> SettingsContent(state, viewModel, onManage = { sheet = RemoteSheet.Channels })
-                    RemoteSheet.Channels -> ChannelManagement(
-                        state.channels,
-                        onAdd = { sheet = null; viewModel.openAddChannel() },
-                        onEdit = { channel -> sheet = null; viewModel.openEditChannel(channel) },
-                    )
-                }
+                ChannelList(state, viewModel, Modifier.weight(1f))
             }
         }
     }
 
-    state.channelDraft?.let { ChannelDialog(it, viewModel) }
+    if (settingsOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { settingsOpen = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) { SettingsContent(state, viewModel) }
+    }
+
+    state.channelDraft?.let { ChannelEditor(it, viewModel, state.removingChannel != null) }
     state.removingChannel?.let { channel ->
         AlertDialog(
             onDismissRequest = viewModel::cancelRemove,
-            title = { Text("Remove ${channel.name}?") },
-            text = { Text("This removes the channel from this phone.") },
-            confirmButton = { TextButton(onClick = viewModel::removeChannel) { Text("Remove") } },
+            title = { Text("Delete ${channel.name}?") },
+            text = { Text(state.channelDraft?.error ?: "This removes the channel from this phone.") },
+            confirmButton = { TextButton(onClick = viewModel::removeChannel) { Text("Delete") } },
             dismissButton = { TextButton(onClick = viewModel::cancelRemove) { Text("Cancel") } },
         )
     }
@@ -184,49 +144,4 @@ private fun ConnectionHeader(state: RemoteUiState, onAction: () -> Unit, onSetti
             RemoteIcon(RemoteSymbol.Settings, Modifier.size(23.dp))
         }
     }
-}
-
-@Composable
-private fun ChannelTile(channel: Channel, onClick: () -> Unit, onEdit: () -> Unit, modifier: Modifier) {
-    val logo = channelLogo(channel.key)
-    val shape = MaterialTheme.shapes.medium
-    Box(
-        modifier.height(64.dp).clip(shape)
-            .background(Color(0xFF242637))
-            .semantics {
-                contentDescription = channel.name
-                if (channel.id == null) stateDescription = "Playback ID required"
-            }
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onEdit,
-                onClickLabel = if (channel.id == null) "Configure playback" else "Open channel",
-                onLongClickLabel = "Edit channel",
-                role = Role.Button,
-            )
-            .padding(horizontal = 10.dp, vertical = 9.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (logo != null) {
-            Image(
-                painter = painterResource(logo),
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else {
-            RemoteIcon(RemoteSymbol.Tv, Modifier.size(24.dp), tint = Color(0xFFC9CBD9))
-        }
-    }
-}
-
-@DrawableRes
-private fun channelLogo(key: String): Int? = when (key) {
-    DefaultChannel.AsianetHd.key -> R.drawable.logo_asianet_hd
-    DefaultChannel.Flowers.key -> R.drawable.logo_flowers
-    DefaultChannel.MazhavilHd.key -> R.drawable.logo_mazhavil_hd
-    DefaultChannel.AsianetMoviesHd.key -> R.drawable.logo_asianet_movies_hd
-    DefaultChannel.AsianetPlus.key -> R.drawable.logo_asianet_plus
-    DefaultChannel.SunTv.key -> R.drawable.logo_sun_tv
-    else -> null
 }

@@ -86,7 +86,7 @@ class RemoteViewModelTest {
         vm.connect()
         vm.connect()
         vm.setHost("10.0.0.8")
-        vm.keyEvent(4)
+        vm.keyEvent(164)
         runCurrent()
         assertEquals(listOf(RemoteCommands.probe), commands)
         assertEquals(ConnectionStatus.Connecting, vm.state.value.connection)
@@ -95,11 +95,11 @@ class RemoteViewModelTest {
         probe.complete("jioremote-ready")
         runCurrent()
         assertTrue(vm.state.value.canSend)
-        vm.keyEvent(4)
-        vm.keyEvent(23)
+        vm.keyEvent(164)
+        vm.keyEvent(25)
         vm.disconnect()
         runCurrent()
-        assertEquals(listOf(RemoteCommands.probe, RemoteCommands.key(4)), commands)
+        assertEquals(listOf(RemoteCommands.probe, RemoteCommands.key(164)), commands)
         assertEquals(RemoteOperation.Command, vm.state.value.operation)
 
         key.complete("")
@@ -175,17 +175,83 @@ class RemoteViewModelTest {
 
         vm.play(channel)
         assertEquals(channel.key, vm.state.value.channelDraft?.key)
-        assertEquals("", vm.state.value.channelDraft?.id)
-        vm.setChannelId("123; exit")
+        assertEquals("", vm.state.value.channelDraft?.number)
+        vm.setChannelNumber("123; exit")
         vm.saveChannel()
         assertNotNull(vm.state.value.channelDraft?.error)
         assertTrue(saved.isEmpty())
 
-        vm.setChannelId("123")
+        vm.setChannelNumber("123")
         vm.saveChannel()
-        assertEquals(channel.copy(id = "123"), saved.single())
+        assertEquals(channel.copy(number = "123"), saved.single())
         assertEquals(saved, vm.state.value.channels)
         assertNull(vm.state.value.channelDraft)
+    }
+
+    @Test fun tuningSendsOneSequenceAndIgnoresOverlappingChannelRequests() = runTest(dispatcher) {
+        val release = CompletableDeferred<String>()
+        val commands = mutableListOf<String>()
+        val vm = model(settings(), runCommand = { _, _, command ->
+            if (command == RemoteCommands.probe) "jioremote-ready" else {
+                commands += command
+                release.await()
+            }
+        })
+        runCurrent()
+        vm.setHost("192.168.1.82")
+        vm.connect()
+        runCurrent()
+        val movies = DefaultChannel.AsianetMoviesHd.create()
+        vm.play(movies)
+        vm.play(Channel("custom:other", "Other", "100"))
+        runCurrent()
+        assertEquals(listOf(RemoteCommands.channel("1827")), commands)
+        assertEquals(movies.key, vm.state.value.tuningChannelKey)
+        release.complete("")
+        runCurrent()
+        assertNull(vm.state.value.tuningChannelKey)
+    }
+
+    @Test fun addEditDeleteAndReorderPersistAcrossViewModelReopen() = runTest(dispatcher) {
+        var saved = listOf(DefaultChannel.Flowers.create(), DefaultChannel.AsianetMoviesHd.create())
+        var saves = 0
+        val store = settings()
+        val vm = model(store, loadChannels = { saved }, saveChannels = { saved = it; saves++ })
+        runCurrent()
+
+        vm.openAddChannel()
+        vm.setChannelName("Favourite")
+        vm.setChannelNumber("0130")
+        vm.saveChannel()
+        val added = saved.last()
+        assertEquals("0130", added.number)
+        vm.openEditChannel(added)
+        vm.setChannelName("Renamed")
+        vm.saveChannel()
+        assertEquals("Renamed", saved.last().name)
+        assertEquals(added.key, saved.last().key)
+
+        vm.beginChannelReorder()
+        vm.moveChannel(added.key, saved.first().key)
+        assertEquals(added.key, vm.state.value.channels.first().key)
+        assertEquals(added.key, saved.last().key)
+        assertEquals(2, saves)
+        vm.finishChannelReorder(save = true)
+        val reopened = model(store, loadChannels = { saved }, saveChannels = { saved = it })
+        assertEquals(added.key, reopened.state.value.channels.first().key)
+
+        reopened.beginChannelReorder()
+        reopened.moveChannel(added.key, saved.last().key)
+        reopened.finishChannelReorder(save = false)
+        assertEquals(saved, reopened.state.value.channels)
+        reopened.openEditChannel(saved.first())
+        reopened.confirmRemove()
+        reopened.cancelRemove()
+        assertEquals(3, saved.size)
+        reopened.confirmRemove()
+        reopened.removeChannel()
+        assertEquals(2, saved.size)
+        assertTrue(saved.none { it.key == added.key })
     }
 
     private fun TestScope.settings(): TvConnectionStore {
@@ -197,7 +263,9 @@ class RemoteViewModelTest {
         store: TvConnectionStore,
         runCommand: suspend (String, Int, String) -> String = { _, _, _ -> error("Unexpected ADB command") },
         pairDevice: suspend (String, Int, String) -> Unit = { _, _, _ -> error("Unexpected pairing") },
-    ): RemoteViewModel = RemoteViewModel(store, { emptyList() }, {}, runCommand, pairDevice).also {
+        loadChannels: () -> List<Channel> = { emptyList() },
+        saveChannels: (List<Channel>) -> Unit = {},
+    ): RemoteViewModel = RemoteViewModel(store, loadChannels, saveChannels, runCommand, pairDevice).also {
         models.put("remote", it)
     }
 }

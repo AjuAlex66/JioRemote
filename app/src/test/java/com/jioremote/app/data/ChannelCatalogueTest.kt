@@ -5,36 +5,33 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChannelCatalogueTest {
-    @Test fun freshCatalogueContainsRequestedChannelsWithOnlyVerifiedDefaultId() {
+    @Test fun freshCatalogueOnlyAssignsTheVerifiedRemoteNumber() {
         val channels = ChannelCatalogue.load(saved = null, savedVersion = 0)
-        assertEquals(
-            listOf("Asianet HD", "Flowers", "Mazhavil Manorama HD", "Asianet Movies HD", "Asianet Plus", "Sun TV"),
-            channels.map { it.name },
-        )
-        assertEquals(listOf("304189"), channels.mapNotNull { it.id })
-        assertEquals(channels.size, channels.distinctBy { it.key }.size)
+        assertEquals(DefaultChannel.entries.map { it.title }, channels.map { it.name })
+        assertEquals(listOf("1827"), channels.mapNotNull { it.number })
+        assertEquals("1827", channels.single { it.key == DefaultChannel.AsianetMoviesHd.key }.number)
+        assertNull(channels.single { it.key == DefaultChannel.SunTv.key }.number)
     }
 
-    @Test fun legacyMigrationKeepsCustomIdsAndRecognisesAlreadyConfiguredDefaults() {
-        val custom = Channel("legacy:123", "My channel", "123")
-        val flowers = Channel("legacy:456", "Flowers TV", "456")
-        val sun = Channel("legacy:304189", "My Sun TV", "304189")
-        val migrated = ChannelCatalogue.load(listOf(custom, flowers, sun), savedVersion = 0)
-
-        assertEquals(custom, migrated[0])
-        assertEquals(flowers.copy(key = DefaultChannel.Flowers.key), migrated[1])
-        assertEquals(sun.copy(key = DefaultChannel.SunTv.key), migrated[2])
-        assertEquals(7, migrated.size)
-        assertNull(migrated.single { it.key == DefaultChannel.AsianetHd.key }.id)
+    @Test fun versionOneMigrationPreservesOrderNamesAndHistoricalIdsWithoutRestoringDeletedDefaults() {
+        val sun = Channel("sun_tv", "My Sun", null, legacyPlaybackId = "304189")
+        val custom = Channel("custom:abc", "My channel", null, "custom.png", "1022")
+        val movies = Channel("asianet_movies_hd", "My movies", null)
+        val saved = listOf(sun, custom, movies)
+        assertEquals(listOf(sun, custom, movies.copy(number = "1827")), ChannelCatalogue.load(saved, 1))
+        assertEquals(emptyList<Channel>(), ChannelCatalogue.load(emptyList(), 1))
     }
 
-    @Test fun migrationDoesNotRestoreRemovedSunTvOrAddDeletedDefaultsAgain() {
-        val migrated = ChannelCatalogue.load(emptyList(), savedVersion = 0)
+    @Test fun conservativelyPreservesEditedMovieChannelWithAHistoricalPlaybackId() {
+        val movies = Channel("asianet_movies_hd", "My movies", null, legacyPlaybackId = "123456")
+        assertEquals(listOf(movies), ChannelCatalogue.load(listOf(movies), 1))
+    }
+
+    @Test fun originalCatalogueMigrationHonorsDeletedSunTv() {
+        val custom = Channel("legacy:456", "Flowers TV", null, legacyPlaybackId = "456")
+        val migrated = ChannelCatalogue.load(listOf(custom), 0)
+        assertEquals(custom.copy(key = DefaultChannel.Flowers.key), migrated.first())
         assertEquals(5, migrated.size)
-        val edited = migrated.drop(1).map {
-            if (it.key == DefaultChannel.Flowers.key) it.copy(name = "Favourite", id = "123") else it
-        }
-        assertEquals(edited, ChannelCatalogue.load(edited, ChannelCatalogue.version))
-        assertEquals(emptyList<Channel>(), ChannelCatalogue.load(emptyList(), ChannelCatalogue.version))
+        assertEquals(migrated.drop(1), ChannelCatalogue.load(migrated.drop(1), ChannelCatalogue.version))
     }
 }

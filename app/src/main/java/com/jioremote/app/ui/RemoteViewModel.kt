@@ -1,6 +1,7 @@
 package com.jioremote.app.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.viewModelScope
@@ -9,10 +10,13 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.jioremote.app.adb.AdbRemoteClient
 import com.jioremote.app.adb.RemoteCommands
 import com.jioremote.app.data.Channel
+import com.jioremote.app.data.ChannelLogoStore
 import com.jioremote.app.data.RemoteSettings
 import com.jioremote.app.data.TvConnection
 import com.jioremote.app.data.TvConnectionStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -55,8 +59,9 @@ internal data class RemoteNotice(
 internal data class ChannelDraft(
     val key: String? = null,
     val name: String = "",
-    val id: String = "",
-    val needsPlaybackId: Boolean = false,
+    val number: String = "",
+    val logoFile: String? = null,
+    val importingLogo: Boolean = false,
     val error: String? = null,
 )
 
@@ -74,6 +79,7 @@ internal data class RemoteUiState(
     val operation: RemoteOperation? = null,
     val notice: RemoteNotice? = null,
     val channelDraft: ChannelDraft? = null,
+    val tuningChannelKey: String? = null,
     val removingChannel: Channel? = null,
 ) {
     val isBusy: Boolean get() = connection == ConnectionStatus.Loading || operation != null
@@ -86,11 +92,16 @@ internal class RemoteViewModel(
     private val saveChannels: (List<Channel>) -> Unit,
     private val runCommand: suspend (String, Int, String) -> String,
     private val pairDevice: suspend (String, Int, String) -> Unit,
+    private val logoStore: ChannelLogoStore? = null,
+    private val importLogo: (suspend (Uri) -> String)? = null,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(RemoteUiState(channels = loadChannels()))
     val state = mutableState.asStateFlow()
+    private var reorderOrigin: List<Channel>? = null
+    private var logoRequest: Any? = null
 
     init {
+        logoStore?.removeUnused(state.value.channels.mapNotNull { it.logoFile }.toSet())
         viewModelScope.launch {
             try {
                 val saved = connectionStore.load()
@@ -176,22 +187,23 @@ internal class RemoteViewModel(
 
     fun launch() = sendCommand({ RemoteCommands.launchApp }, "JioTV+ launch requested.")
     fun play(channel: Channel) {
-        val id = channel.id
+        val number = channel.number
         when {
-            id == null -> openEditChannel(channel)
+            number == null -> openEditChannel(channel)
             state.value.connection != ConnectionStatus.Connected -> mutableState.update {
                 val notice = it.notice?.takeIf(RemoteNotice::isError)
                     ?: RemoteNotice(null, "Connect to your TV to open ${channel.name}.")
                 it.copy(notice = notice)
             }
-            else -> sendCommand({ RemoteCommands.channel(id) }, "Requested ${channel.name} on your TV.")
+            else -> sendCommand({ RemoteCommands.channel(number) }, null, channel.key)
         }
     }
     fun keyEvent(code: Int) = sendCommand({ RemoteCommands.key(code) }, null)
 
-    private fun sendCommand(command: () -> String, success: String?) {
+    private fun sendCommand(command: () -> String, success: String?, channelKey: String? = null) {
         val current = state.value
         if (!current.canSend) return
+        mutableState.update { it.copy(tuningChannelKey = channelKey) }
         perform(RemoteOperation.Command) {
             val output = runCommand(current.host, current.port.toInt(), command())
             check("Error:" !in output && "Exception" !in output)
@@ -252,6 +264,7 @@ internal class RemoteViewModel(
                 mutableState.update {
                     it.copy(
                         operation = null,
+                        tuningChannelKey = null,
                         connection = if (it.connection == ConnectionStatus.Connecting) {
                             ConnectionStatus.Disconnected
                         } else it.connection,
@@ -261,31 +274,83 @@ internal class RemoteViewModel(
         }
     }
 
-    fun openAddChannel() = mutableState.update { it.copy(channelDraft = ChannelDraft()) }
-    fun openEditChannel(channel: Channel) = mutableState.update {
-        it.copy(channelDraft = ChannelDraft(channel.key, channel.name, channel.id.orEmpty(), needsPlaybackId = channel.id == null))
+    fun openAddChannel() = openEditor(ChannelDraft())
+
+    fun openEditChannel(channel: Channel) = openEditor(
+        ChannelDraft(channel.key, channel.name, channel.number.orEmpty(), channel.logoFile)
+    )
+
+    private fun openEditor(draft: ChannelDraft) {
+        if (reorderOrigin != null || state.value.channelDraft != null) return
+        mutableState.update { it.copy(channelDraft = draft) }
     }
-    fun closeAddChannel() = mutableState.update { it.copy(channelDraft = null) }
+
+    fun closeAddChannel() {
+        val stagedLogo = state.value.channelDraft?.logoFile
+        logoRequest = null
+        mutableState.update { it.copy(channelDraft = null) }
+        deleteIfUnused(stagedLogo)
+    }
+
     fun setChannelName(name: String) = editDraft { it.copy(name = name, error = null) }
-    fun setChannelId(id: String) = editDraft { it.copy(id = id, error = null) }
+    fun setChannelNumber(number: String) = editDraft { it.copy(number = number, error = null) }
 
     private fun editDraft(transform: (ChannelDraft) -> ChannelDraft) {
         mutableState.update { it.copy(channelDraft = it.channelDraft?.let(transform)) }
     }
 
+    fun chooseChannelLogo(uri: Uri) {
+        val importer = importLogo ?: return
+        val draft = state.value.channelDraft ?: return
+        if (draft.importingLogo) return
+        val request = Any()
+        logoRequest = request
+        editDraft { it.copy(importingLogo = true, error = null) }
+        viewModelScope.launch {
+            val file = try {
+                importer(uri)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                if (logoRequest === request) {
+                    editDraft { it.copy(importingLogo = false, error = "Couldn’t import that image.") }
+                }
+                return@launch
+            }
+            if (logoRequest !== request) {
+                deleteIfUnused(file)
+                return@launch
+            }
+            editDraft { it.copy(logoFile = file, importingLogo = false) }
+            deleteIfUnused(draft.logoFile)
+        }
+    }
+
+    fun restoreChannelLogo() {
+        val draft = state.value.channelDraft ?: return
+        if (draft.importingLogo) return
+        editDraft { it.copy(logoFile = null, error = null) }
+        deleteIfUnused(draft.logoFile)
+    }
+
     fun saveChannel() {
         val current = state.value
         val draft = current.channelDraft ?: return
+        if (draft.importingLogo) return
+        val existing = current.channels.firstOrNull { it.key == draft.key }
         val candidate = try {
-            val id = draft.id.trim().ifBlank { null }
-            require(id != null) { "Enter a verified JioTV+ channel ID." }
-            Channel(draft.key ?: "custom:${java.util.UUID.randomUUID()}", draft.name.trim(), id)
+            val number = draft.number.ifEmpty { null }
+            Channel(
+                draft.key ?: "custom:${java.util.UUID.randomUUID()}",
+                draft.name.trim(), number, draft.logoFile, existing?.legacyPlaybackId,
+            )
         } catch (e: IllegalArgumentException) {
             editDraft { it.copy(error = e.message) }
             return
         }
         val error = when {
-            current.channels.any { it.id == candidate.id && it.key != candidate.key } -> "That channel ID already exists."
+            candidate.number != null && current.channels.any { it.number == candidate.number && it.key != candidate.key } ->
+                "That channel number already exists."
             draft.key == null && current.channels.size >= 40 -> "You can save up to 40 channels."
             else -> null
         }
@@ -293,26 +358,72 @@ internal class RemoteViewModel(
             editDraft { it.copy(error = error) }
             return
         }
-        val revised = if (draft.key == null) current.channels + candidate
-        else current.channels.map { if (it.key == draft.key) candidate else it }
-        updateChannels(revised)
+        val revised = if (existing == null) current.channels + candidate
+        else current.channels.map { if (it.key == candidate.key) candidate else it }
+        if (persistChannels(revised)) {
+            mutableState.update { it.copy(channelDraft = null) }
+            deleteIfUnused(existing?.logoFile)
+        }
     }
 
     fun confirmRemove() = mutableState.update { current ->
-        val channel = current.channels.firstOrNull { it.key == current.channelDraft?.key }
-        current.copy(channelDraft = null, removingChannel = channel)
+        current.copy(removingChannel = current.channels.firstOrNull { it.key == current.channelDraft?.key })
     }
+
     fun cancelRemove() = mutableState.update { it.copy(removingChannel = null) }
 
     fun removeChannel() {
         val current = state.value
         val channel = current.removingChannel ?: return
-        updateChannels(current.channels.filterNot { it.key == channel.key })
+        if (persistChannels(current.channels.filterNot { it.key == channel.key })) {
+            closeAddChannel()
+            mutableState.update { it.copy(removingChannel = null) }
+            deleteIfUnused(channel.logoFile)
+        }
     }
 
-    private fun updateChannels(channels: List<Channel>) {
-        saveChannels(channels)
-        mutableState.update { it.copy(channels = channels, channelDraft = null, removingChannel = null) }
+    fun beginChannelReorder() {
+        if (reorderOrigin == null) reorderOrigin = state.value.channels
+    }
+
+    fun moveChannel(key: String, targetKey: String) {
+        val channels = state.value.channels
+        val from = channels.indexOfFirst { it.key == key }
+        val to = channels.indexOfFirst { it.key == targetKey }
+        if (from < 0 || to < 0 || from == to) return
+        val reordered = channels.toMutableList().apply { add(to, removeAt(from)) }.toList()
+        if (reorderOrigin != null) mutableState.update { it.copy(channels = reordered) }
+        else persistChannels(reordered)
+    }
+
+    fun finishChannelReorder(save: Boolean) {
+        val original = reorderOrigin ?: return
+        reorderOrigin = null
+        val reordered = state.value.channels
+        if (!save || (reordered != original && !persistChannels(reordered))) {
+            mutableState.update { it.copy(channels = original) }
+        }
+    }
+
+    private fun persistChannels(channels: List<Channel>): Boolean {
+        return try {
+            saveChannels(channels)
+            mutableState.update { it.copy(channels = channels) }
+            true
+        } catch (_: Exception) {
+            mutableState.update {
+                val message = "Couldn’t save channels. Try again."
+                if (it.channelDraft != null) it.copy(channelDraft = it.channelDraft.copy(error = message))
+                else it.copy(notice = RemoteNotice(null, message, isError = true))
+            }
+            false
+        }
+    }
+
+    private fun deleteIfUnused(name: String?) {
+        if (name != null && state.value.channels.none { it.logoFile == name } &&
+            state.value.channelDraft?.logoFile != name
+        ) logoStore?.delete(name)
     }
 
     companion object {
@@ -321,7 +432,10 @@ internal class RemoteViewModel(
                 val application: Application = checkNotNull(this[APPLICATION_KEY])
                 val settings = RemoteSettings(application)
                 val remote = AdbRemoteClient(application)
-                RemoteViewModel(settings.connection, settings::loadChannels, settings::saveChannels, remote::run, remote::pair)
+                val logos = ChannelLogoStore(application.filesDir.resolve(ChannelLogoStore.directoryName))
+                RemoteViewModel(settings.connection, settings::loadChannels, settings::saveChannels, remote::run, remote::pair, logos) { uri ->
+                    withContext(Dispatchers.IO) { logos.importPhoto(application.contentResolver, uri) }
+                }
             }
         }
     }
